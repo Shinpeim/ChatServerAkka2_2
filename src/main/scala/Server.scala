@@ -33,7 +33,7 @@ class Server extends Actor{
 
       // 今後クライアントソケットからのメッセージは
       // Clientアクターが受け取るように設定する
-      val client = context.actorOf(Props[Client])
+      val client = context.actorOf(Props(new Client(sender)))
       sender ! Tcp.Register(client)
   }
 }
