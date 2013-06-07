@@ -56,7 +56,7 @@ class Server extends Actor{
       //     Event(TwoLines) がハンドラーに渡される。
       //
       //   * このpipelineワーカーに対してCommand(message:Any)を渡すと、
-      //     パイプラインのコマンド側にTを流し込む。
+      //     パイプラインのコマンド側にmessageを流し込む。
       //     コマンド側のパイプを出て行ったデータは、
       //     IOワーカーに渡される。
       //     そのため、一番したのパイプラインはTcp.Writeなどのコマンドを
