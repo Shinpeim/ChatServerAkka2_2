@@ -1,5 +1,6 @@
 import akka.actor.{Props, ActorRef, Actor}
-import akka.io.{ IO, Tcp }
+import akka.event.NoLogging
+import akka.io.{TcpReadWriteAdapter, TcpPipelineHandler, IO, Tcp}
 import java.net.InetSocketAddress
 
 class Server extends Actor{
@@ -26,14 +27,45 @@ class Server extends Actor{
   def bound: Receive = {
     // クライアントからの接続があったときに送られてくる
     case Tcp.Connected(remote, local) =>
-      // このメッセージの送り手がserverソケットではなく
-      // クライアントソケットの管理者であるため、
-      // falseが表示される
-      println(sender == serverSockSender)
 
-      // 今後クライアントソケットからのメッセージは
-      // Clientアクターが受け取るように設定する
-      val client = context.actorOf(Props(new Client(sender)))
-      sender ! Tcp.Register(client)
+      // クライアントとのIOをやってくれるIOワーカー
+      val connectionActor = sender
+
+      //pipelineを組み立てる
+      val pipeLineStages =
+        new TwoLinesStage >>
+          new ByteStringStage >>
+          new TcpReadWriteAdapter
+
+      // pipelineワーカーをつくる。
+      // このpipelineワーカーの構成要素は、
+      //   * pipeline
+      //   * IOワーカー
+      //   * ハンドラー
+      // である。
+      // pipelineワーカーの中では以下のような仕事が行われる
+      //   * IOワーカーのメッセージ(Tcp.ReceiveなどのTcp.Event) を
+      //     pipeline のイベント側に流し込む(そのためpipelineの一番下は
+      //     Tcp.Eventをイベントとして受け取れるようになっていなければならない。)
+      //     TcpReadWriteAdapterはTcp.Eventを受け取りByteStringに変換してくれるので、
+      //     今回はそれを使っている。
+      //
+      //   * パイプラインから出てきたイベントをEventというcase classに
+      //     包んでハンドラーにメッセージとして渡す
+      //     今回パイプラインの一番上はTwoLineStageなので、
+      //     Event(TwoLines) がハンドラーに渡される。
+      //
+      //   * このpipelineワーカーに対してCommand(message:Any)を渡すと、
+      //     パイプラインのコマンド側にTを流し込む。
+      //     コマンド側のパイプを出て行ったデータは、
+      //     IOワーカーに渡される。
+      //     そのため、一番したのパイプラインはTcp.Writeなどのコマンドを
+      //     吐き出すようになっていなければならない。
+      val init = TcpPipelineHandler.withLogger(NoLogging, pipeLineStages)
+      val client = context.actorOf(Props(new Client(init))) //ハンドラー。
+      val pipelineWorker = context.actorOf(TcpPipelineHandler.props(init, connectionActor, client))
+
+      // IOワーカーがpipelineワーカーにメッセージを送るように設定する
+      connectionActor ! Tcp.Register(pipelineWorker)
   }
 }
