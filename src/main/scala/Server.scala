@@ -1,9 +1,14 @@
-import akka.actor.{Props, ActorRef, Actor}
+import akka.actor.SupervisorStrategy.Stop
+import akka.actor.{OneForOneStrategy, Props, ActorRef, Actor}
 import akka.event.NoLogging
-import akka.io.{TcpReadWriteAdapter, TcpPipelineHandler, IO, Tcp}
+import akka.io
+import akka.io._
+import akka.util.ByteString
 import java.net.InetSocketAddress
+import scala.concurrent.{ExecutionContext, promise}
 
 class Server extends Actor{
+  val roomService = context.actorOf(Props[RoomService])
 
   // サーバーソケットを管理してくれるアクターを作る。
   // 第一引数に self を指定することで、
@@ -32,40 +37,25 @@ class Server extends Actor{
       val connectionActor = sender
 
       //pipelineを組み立てる
-      val pipeLineStages =
-        new TwoLinesStage >>
-          new ByteStringStage >>
-          new TcpReadWriteAdapter
+      val pipeLineStages = new ClientMessageStage >>
+        new StringByteStringAdapter("UTF-8") >>
+        new DelimiterFraming(1024, ByteString("\r\n")) >>
+        new TcpReadWriteAdapter
 
-      // pipelineワーカーをつくる。
-      // このpipelineワーカーの構成要素は、
-      //   * pipeline
-      //   * IOワーカー
-      //   * ハンドラー
-      // である。
-      // pipelineワーカーの中では以下のような仕事が行われる
-      //   * IOワーカーのメッセージ(Tcp.ReceiveなどのTcp.Event) を
-      //     pipeline のイベント側に流し込む(そのためpipelineの一番下は
-      //     Tcp.Eventをイベントとして受け取れるようになっていなければならない。)
-      //     TcpReadWriteAdapterはTcp.Eventを受け取りByteStringに変換してくれるので、
-      //     今回はそれを使っている。
-      //
-      //   * パイプラインから出てきたイベントをEventというcase classに
-      //     包んでハンドラーにメッセージとして渡す
-      //     今回パイプラインの一番上はTwoLineStageなので、
-      //     Event(TwoLines) がハンドラーに渡される。
-      //
-      //   * このpipelineワーカーに対してCommand(message:Any)を渡すと、
-      //     パイプラインのコマンド側にmessageを流し込む。
-      //     コマンド側のパイプを出て行ったデータは、
-      //     IOワーカーに渡される。
-      //     そのため、一番したのパイプラインはTcp.Writeなどのコマンドを
-      //     吐き出すようになっていなければならない。
+      val p = promise[ActorRef]
+      val f = p.future
+
       val init = TcpPipelineHandler.withLogger(NoLogging, pipeLineStages)
-      val client = context.actorOf(Props(new Client(init))) //ハンドラー。
+      val client = context.actorOf(Props(new Client(roomService, init, f))) //ハンドラー。
       val pipelineWorker = context.actorOf(TcpPipelineHandler.props(init, connectionActor, client))
+
+      p.success(pipelineWorker)
 
       // IOワーカーがpipelineワーカーにメッセージを送るように設定する
       connectionActor ! Tcp.Register(pipelineWorker)
+  }
+
+  override val supervisorStrategy = OneForOneStrategy() {
+    case _ => Stop
   }
 }
