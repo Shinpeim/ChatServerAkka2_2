@@ -60,7 +60,7 @@ class Client(roomService: ActorRef,
     case init.Event(ReceivedExit) =>
       roomService ! RoomService.Exit(room, self)
       roomService ! RoomService.Broadcast(room, ClientMessageStage.SomeoneExited(name))
-      context.become(named(name))
+      context.become(named(name) orElse receiveFallback)
   }
 
   def receive: Receive = (default orElse receiveFallback)
