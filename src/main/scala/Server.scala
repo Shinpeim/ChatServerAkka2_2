@@ -1,11 +1,10 @@
 import akka.actor.SupervisorStrategy.Stop
 import akka.actor.{OneForOneStrategy, Props, ActorRef, Actor}
-import akka.event.NoLogging
-import akka.io
 import akka.io._
 import akka.util.ByteString
 import java.net.InetSocketAddress
-import scala.concurrent.{ExecutionContext, promise}
+import scala.concurrent.promise
+import akka.event.Logging
 
 class Server extends Actor{
   val roomService = context.actorOf(Props[RoomService])
@@ -16,13 +15,10 @@ class Server extends Actor{
   // このアクターにメッセージを送ってくるようになる
   IO(Tcp)(context.system) ! Tcp.Bind(self, new InetSocketAddress("localhost", 9876))
 
-  var serverSockSender:ActorRef = null
-
   def receive: Receive = {
     // Bindに成功したときにserverSocketを管理してるactorから送られる
     case Tcp.Bound(localAddress) =>
       // serverSocketを管理してるアクターを保持しておく
-      serverSockSender = sender
       context.become(bound)
 
     // Bindに失敗したときにserverSocketを管理しているactorから送られる
@@ -45,7 +41,7 @@ class Server extends Actor{
       val p = promise[ActorRef]
       val f = p.future
 
-      val init = TcpPipelineHandler.withLogger(NoLogging, pipeLineStages)
+      val init = TcpPipelineHandler.withLogger(Logging.getLogger(context.system, self), pipeLineStages)
       val client = context.actorOf(Props(new Client(roomService, init, f))) //ハンドラー。
       val pipelineWorker = context.actorOf(TcpPipelineHandler.props(init, connectionActor, client))
 
